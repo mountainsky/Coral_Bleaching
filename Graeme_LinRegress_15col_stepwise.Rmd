@@ -1,0 +1,322 @@
+---
+title: "606 Project"
+author: "Graeme Ko"
+date: "2024-02-10"
+output: pdf_document
+---
+
+Current working file
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(leaps)
+library(GGally)
+library(olsrr)
+library(lmtest)
+library(car)
+library(dplyr)
+library(leaps)
+library(MASS)
+```
+
+## The dataset
+
+```{r}
+df = read.csv('Clean_Coral_Data.csv')
+head(df)
+```
+```{r}
+dim(df)
+```
+
+```{r}
+lm.mod_all = lm(Percent_Bleaching~., data=df)
+#summary(lm.mod_all)
+```
+```{r}
+df_nums <- Filter(is.numeric, df)
+#head(df_nums)
+```
+
+### Dimensionality Reduction
+
+```{r}
+cors <- cor(df_nums)
+corind <- which(cors > 0.7 & cors < 1, arr.ind=TRUE)
+cornames <- rownames(cors)[corind[, 1]]
+cornames
+```
+
+```{r}
+cors
+```
+
+```{r}
+dropnames <- c("Temperature_Minimum")
+
+#Dropping highest correlation variables of least interest
+df_red1 <- df_nums[, -which(names(df_nums) %in% dropnames), drop = FALSE]
+```
+
+```{r}
+lm.mod_reduced1 = lm(Percent_Bleaching~., data=df_red1)
+summary(lm.mod_reduced1)
+```
+```{r}
+vifs <- vif(lm.mod_reduced1)
+vifs
+```
+
+
+```{r}
+#Dropping highly colinear column
+cols_drop <- c("Temperature_Maximum")
+df_red2 <- df_red1[, -which(names(df_red1) %in% cols_drop), drop = FALSE]
+```
+
+```{r}
+lm.mod_reduced2 = lm(Percent_Bleaching~., data=df_red2)
+#summary(lm.mod_reduced2)
+```
+```{r}
+vifs <- vif(lm.mod_reduced2)
+vifs
+```
+
+```{r}
+cors <- cor(df_red2)
+```
+
+```{r}
+corind <- which(cors > 0.5 & cors < 1, arr.ind=TRUE)
+cornames <- rownames(cors)[corind[, 1]]
+cornames
+```
+
+```{r}
+cordata <- subset(df_red2, select=c(cornames,"Percent_Bleaching"))
+```
+
+## Model Building
+
+```{r}
+#Include the categorical variables now to check significance of everything
+df_nonnum <- Filter(function(x) !is.numeric(x), df)
+df_all <- cbind(df_red2,df_nonnum)
+```
+
+```{r}
+mmod = lm(Percent_Bleaching~., data=df_all)
+summary(mmod)
+```
+
+### Conducting best subset method for finding significant variables
+
+```{r}
+best.subset<- regsubsets(Percent_Bleaching~., data = df_all, nv=12)
+```
+
+### Summary of best subset model
+
+```{r}
+reg.summary <- summary(best.subset)
+summary(best.subset)
+```
+```{r}
+rsquare<-c(reg.summary$rsq)
+cp<-c(reg.summary$cp)
+AdjustedR<-c(reg.summary$adjr2)
+RMSE<-c(reg.summary$rss)
+BIC<-c(reg.summary$bic)
+cbind(rsquare,cp,BIC,RMSE,AdjustedR)
+```
+
+
+```{r}
+par(mfrow=c(3,2)) # split the plotting panel into a 3 x 2 grid
+plot(reg.summary$cp,type = "o",pch=10, xlab="Number of Variables",ylab= "Cp")
+plot(reg.summary$bic,type = "o",pch=10, xlab="Number of Variables",ylab= "BIC")
+plot(reg.summary$rsq,type = "o",pch=10, xlab="Number of Variables",ylab= "Rˆ2")
+plot(reg.summary$rss,type = "o",pch=10, xlab="Number of Variables",ylab= "RMSE")
+plot(reg.summary$adjr2,type = "o",pch=10, xlab="Number of Variables",ylab= "Adjusted Rˆ2")
+```
+
+
+### Conducting stepwise method to compare to best subset method
+
+```{r}
+ks=ols_step_best_subset(mmod, details=TRUE)
+# for the output interpretation
+AdjustedR<-c(ks$adjr)
+cp<-c(ks$cp)
+AIC<-c(ks$aic)
+cbind(AdjustedR,cp,AIC)
+```
+
+```{r}
+par(mfrow=c(2,2)) # split the plotting panel into a 2 x 2 grid
+plot(ks$cp,type = "o",pch=10, xlab="Number of Variables",ylab= "Cp")
+plot(ks$aic,type = "o",pch=10, xlab="Number of Variables",ylab= "AIC")
+plot(ks$adjr,type = "o",pch=10, xlab="Number of Variables",ylab= "Adjusted Rˆ2")
+```
+
+### Will choose a 10-variable base model as the Cp is closest to number of predictors + 1, while the AIC is close to being minimized. 
+
+```{r}
+vars <- c(ks$predictors)
+vars
+```
+
+```{r}
+keepnames <- c(vars[10])
+keepnames <- strsplit(keepnames, " ")[[1]]
+keepnames <- c("Percent_Bleaching",keepnames)
+df_sig <- df_all[, which(names(df_all) %in% keepnames), drop = FALSE]
+```
+
+```{r}
+klsmod <- lm(Percent_Bleaching~.,data=df_sig)
+summary(klsmod)
+```
+
+Building an interaction model off of it:
+
+```{r}
+int_mmod = lm(Percent_Bleaching~.^2, data=df_sig)
+summary(int_mmod)
+```
+
+```{r}
+coefs <- summary(int_mmod)$coefficients
+coef_names <- rownames(summary(int_mmod)$coefficients)
+coef_nonsigs <- coef_names[which(coefs[, 1] > 0.05)]
+coef_sigs <- coef_names[which(coefs[, 1] < 0.05)]
+ints <- grep(":", coef_names, value = TRUE)
+intkeep <- grep(":", coef_sigs, value = TRUE)
+intnokeep <- grep(":", coef_nonsigs, value = TRUE)
+```
+
+```{r}
+singles <- coef_names[which(!(coef_names %in% ints))]
+singles <- singles[singles != "(Intercept)"]
+
+intkeep_numer <- intkeep[!grepl("Ocean|Exposure", intkeep)]
+intkeep_categs <- intkeep[grepl("Ocean|Exposure", intkeep)]
+singles_numer <- singles[!grepl("Ocean|Exposure", singles)]
+
+print(intkeep_categs)
+```
+
+
+```{r}
+allvar <- c(singles_numer,intkeep_numer)
+#allvar is all the significant single variable and numerical variable interactions
+varkeep <- as.formula(paste("Percent_Bleaching~", paste(allvar, collapse = "+")))
+varkeep <- update(varkeep, . ~ . + Ocean_Name + Exposure + 
+                    Turbidity:Exposure + Turbidity:Ocean_Name +
+                    Depth_m:Ocean_Name + Depth_m:Exposure + 
+                    Temperature_Kelvin:Ocean_Name + Temperature_Mean:Exposure +
+                    Windspeed:Exposure + SSTA_Maximum:Ocean_Name + 
+                    SSTA_Maximum:Exposure + SSTA_Frequency:Ocean_Name + 
+                    SSTA_Frequency:Exposure + Ocean_Name:Exposure)
+```
+
+```{r}
+int_mmod_red = lm(varkeep, data=df_sig)
+summary(int_mmod_red)
+```
+### Our final interaction model has a silightly higher R-adjusted.
+
+### Looking at higher order terms now
+
+```{r}
+ocean_attributes <- subset(df, select=c("Percent_Bleaching","Turbidity",
+                                           "Cyclone_Frequency","Depth_m"))
+```
+
+```{r}
+ggpairs(ocean_attributes,lower = list(continuous = "smooth_loess", combo =
+ "facethist", discrete = "facetbar", na = "na"))
+```
+
+```{r}
+temp_attributes <- subset(df, select=c("Percent_Bleaching","Temperature_Mean",
+                                           "SSTA_Maximum","SSTA_Frequency"))
+```
+
+```{r}
+ggpairs(temp_attributes,lower = list(continuous = "smooth_loess", combo =
+ "facethist", discrete = "facetbar", na = "na"))
+```
+### No clear non-linear relationships found from the scatterplots, will move on to model testing the interaction model. 
+
+### Testing outliers and high leverage points
+
+```{r}
+finmod <- lm(varkeep,data=df_sig)
+summary(finmod)
+```
+
+```{r}
+df[cooks.distance(finmod)>1,] 
+```
+
+```{r}
+plot(finmod,pch=18,col="red",which=c(4))
+```
+
+```{r}
+plot(finmod,which=5)
+```
+
+
+```{r}
+lev=hatvalues(finmod)
+p = length(coef(finmod))
+n = nrow(df)
+outlier3p = lev[lev>(3*p/n)]
+```
+```{r}
+print(length(outlier3p))
+```
+
+```{r}
+outi <- as.numeric(names(outlier3p))
+df_new = df[-outi,]
+```
+
+### Building the model again without the outliers
+```{r}
+finmod <- lm(varkeep,data=df_new)
+
+summary(finmod)
+```
+
+### Plotting residuals to look at normality and heteroskedasticity
+
+```{r}
+ggplot(finmod, aes(x=.fitted, y=.resid)) +
+geom_point() + geom_smooth()+
+geom_hline(yintercept = 0)
+```
+
+```{r}
+ggplot(data=df_new, aes(residuals(finmod))) +
+geom_histogram(color='red',fill='blue') +
+labs(title="Histogram for residuals") +
+labs(x="residuals", y="Count")
+```
+
+```{r}
+ggplot(df_new, aes(sample=finmod$residuals)) +
+stat_qq() +
+stat_qq_line() +
+ggtitle("Q-Q normality plot")
+```
+
+
+### Does not pass the assumption tests.

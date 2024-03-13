@@ -1,0 +1,696 @@
+---
+title: "606 Project"
+author: "Graeme Ko"
+date: "2024-02-10"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+Current working file
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(leaps)
+library(GGally)
+library(olsrr)
+library(lmtest)
+library(car)
+library(dplyr)
+library(leaps)
+library(MASS)
+```
+
+# The dataset
+
+```{r}
+df = read.csv('Clean_Coral_Data.csv')
+head(df)
+```
+
+```{r}
+dim(df)
+```
+
+```{r}
+lm.mod_all = lm(Percent_Bleaching~., data=df)
+#summary(lm.mod_all)
+```
+
+```{r}
+df_nums <- Filter(is.numeric, df)
+#head(df_nums)
+```
+
+# Dimensionality Reduction
+
+```{r}
+cors <- cor(df_nums)
+corind <- which(cors > 0.7 & cors < 1, arr.ind=TRUE)
+cornames <- rownames(cors)[corind[, 1]]
+cornames
+```
+
+```{r}
+cors
+```
+
+```{r}
+dropnames <- c("Temperature_Minimum")
+
+#Dropping highest correlation variables of least interest
+df_red1 <- df_nums[, -which(names(df_nums) %in% dropnames), drop = FALSE]
+```
+
+```{r}
+lm.mod_reduced1 = lm(Percent_Bleaching~., data=df_red1)
+summary(lm.mod_reduced1)
+```
+
+```{r}
+vifs <- vif(lm.mod_reduced1)
+vifs
+```
+
+```{r}
+#Dropping highly colinear column
+cols_drop <- c("Temperature_Maximum")
+df_red2 <- df_red1[, -which(names(df_red1) %in% cols_drop), drop = FALSE]
+```
+
+```{r}
+lm.mod_reduced2 = lm(Percent_Bleaching~., data=df_red2)
+#summary(lm.mod_reduced2)
+```
+
+```{r}
+vifs <- vif(lm.mod_reduced2)
+vifs
+```
+
+```{r}
+cors <- cor(df_red2)
+```
+
+```{r}
+corind <- which(cors > 0.5 & cors < 1, arr.ind=TRUE)
+cornames <- rownames(cors)[corind[, 1]]
+cornames
+```
+
+```{r}
+cordata <- subset(df_red2, select=c(cornames,"Percent_Bleaching"))
+```
+
+# Model Building
+
+## Manually Building
+
+```{r}
+#Include the categorical variables now to check significance of everything
+df_nonnum <- Filter(function(x) !is.numeric(x), df)
+df_all <- cbind(df_red2,df_nonnum)
+```
+
+```{r}
+mmod = lm(Percent_Bleaching~., data=df_all)
+summary(mmod)
+```
+
+```{r}
+df_sig <- df_all
+```
+
+```{r}
+mmod_sig = lm(Percent_Bleaching~., data=df_sig)
+summary(mmod_sig)
+```
+
+Building an interaction model off of it:
+
+```{r}
+int_mmod = lm(Percent_Bleaching~.^2, data=df_sig)
+summary(int_mmod)
+```
+
+```{r}
+coefs <- summary(int_mmod)$coefficients
+coef_names <- rownames(summary(int_mmod)$coefficients)
+coef_nonsigs <- coef_names[which(coefs[, 1] > 0.05)]
+coef_sigs <- coef_names[which(coefs[, 1] < 0.05)]
+ints <- grep(":", coef_names, value = TRUE)
+intkeep <- grep(":", coef_sigs, value = TRUE)
+intnokeep <- grep(":", coef_nonsigs, value = TRUE)
+```
+
+```{r}
+singles <- coef_names[which(!(coef_names %in% ints))]
+singles <- singles[singles != "(Intercept)"]
+
+intkeep_numer <- intkeep[!grepl("Ocean|Exposure", intkeep)]
+intkeep_categs <- intkeep[grepl("Ocean|Exposure", intkeep)]
+singles_numer <- singles[!grepl("Ocean|Exposure", singles)]
+
+print(intkeep_categs)
+```
+
+```{r}
+allvar <- c(singles_numer,intkeep_numer)
+#allvar is all the significant single variable and numerical variable interactions
+varkeep <- as.formula(paste("Percent_Bleaching~", paste(allvar, collapse = "+")))
+varkeep <- update(varkeep, . ~ . + Ocean_Name + Exposure + 
+                    Distance_to_Shore:Ocean_Name + Distance_to_Shore:Exposure +
+                    Turbidity:Exposure + Turbidity:Ocean_Name +
+                    Depth_m:Ocean_Name + Depth_m:Exposure + Temperature_Kelvin:Ocean_Name +
+                    Temperature_Kelvin:Exposure + Temperature_Mean:Exposure +
+                    Temperature_Mean:Ocean_Name + Windspeed:Ocean_Name + SSTA:Exposure +
+                    SSTA:Ocean_Name + SSTA_Maximum:Ocean_Name + 
+                    SSTA_Maximum:Exposure + SSTA_Frequency:Ocean_Name + 
+                    SSTA_Frequency:Exposure + Ocean_Name:Exposure)
+```
+
+```{r}
+int_mmod_red = lm(varkeep, data=df_sig)
+summary(int_mmod_red)
+```
+
+Looking at higher order terms now
+
+```{r}
+ocean_attributes <- subset(df, select=c("Percent_Bleaching","Turbidity",
+                                           "Cyclone_Frequency","Depth_m"))
+```
+
+```{r}
+
+```
+
+```{r}
+temp_attributes <- subset(df, select=c("Percent_Bleaching","Temperature_Mean",
+                                           "SSTA","SSTA_Maximum","SSTA_Frequency"))
+```
+
+```{r}
+
+```
+
+## Testing
+
+```{r}
+finmod <- lm(varkeep,data=df_sig)
+summary(finmod)
+```
+
+```{r}
+df[cooks.distance(finmod)>1,] 
+```
+
+```{r}
+plot(finmod,pch=18,col="red",which=c(4))
+```
+
+```{r}
+plot(finmod,which=5)
+```
+
+```{r}
+lev=hatvalues(finmod)
+p = length(coef(finmod))
+n = nrow(df)
+outlier3p = lev[lev>(3*p/n)]
+```
+
+```{r}
+print(length(outlier3p))
+```
+
+```{r}
+outi <- as.numeric(names(outlier3p))
+df_new = df[-outi,]
+```
+
+### Building the model again without the outliers
+
+```{r}
+finmod <- lm(varkeep,data=df_new)
+
+summary(finmod)
+```
+
+```{r}
+ggplot(finmod, aes(x=.fitted, y=.resid)) +
+geom_point() + geom_smooth()+
+geom_hline(yintercept = 0)
+```
+
+```{r}
+ggplot(data=df_new, aes(residuals(finmod))) +
+geom_histogram(color='red',fill='blue') +
+labs(title="Histogram for residuals") +
+labs(x="residuals", y="Count")
+```
+
+```{r}
+ggplot(df_new, aes(sample=finmod$residuals)) +
+stat_qq() +
+stat_qq_line() +
+ggtitle("Q-Q normality plot")
+```
+
+```{r echo = TRUE}
+df_new_edt <- Filter(is.numeric, df_new)
+# Preprocess the data: Convert bleaching percentage into a binary variable
+df_new_edt$Bleached <- ifelse(df_new_edt$Percent_Bleaching > 10, "Bleached", "Not Bleached")
+df_new_edt <- df_new_edt[,-which(names(df_new_edt) == "Percent_Bleaching")]
+table(df_new_edt$Bleached)
+# Split the data into training and testing sets
+n <- nrow(df_red1)
+n
+strata_sizes_lda <- round(table(df_new_edt$Bleached) * 0.75)
+strata_sizes_lda
+
+strata_sizes_lda=c(4196,7388)
+
+set.seed(2023)
+# Perform stratified sampling
+idx2_lda=sampling:::strata(df_new_edt, stratanames=c("Bleached"), size = strata_sizes_lda, method = "srswor")
+# Extract the row indices for the sample
+
+# Create training and testing datasets
+trainingData_lda <- df_new_edt[idx2_lda$ID_unit, ]
+testingData_lda <- df_new_edt[-idx2_lda$ID_unit, ]
+
+```
+
+```{r echo = TRUE}
+
+
+#df_new_edt$Bleaching_Level <- ifelse(df_new_edt$Percent_Bleaching <= 10, "Mild", "Severe")
+#df_new_edt <- df_new_edt[,-which(names(df_new_edt) == "Percent_Bleaching")]
+
+#table(df_new_edt$Bleaching_Level)
+
+#df_new_edt$Bleached_Multi <- ifelse(df_red1$Percent_Bleaching == 0, 0, ifelse(df_red1$Percent_Bleaching <= 10, 1, #ifelse(df_red1$Percent_Bleaching <= 50, 2, 3)))
+
+
+```
+
+```{r echo = TRUE}
+table(trainingData_lda$Bleached)
+```
+
+```{r echo = TRUE}
+
+library(ISLR)
+
+lda.fit <- lda(Bleached~.,data=trainingData_lda)
+lda.fit
+plot(lda.fit)
+cat("\n")
+contrasts(factor(trainingData_lda$Bleached))
+
+
+```
+
+```{r echo =TRUE}
+library(klaR)
+partimat(factor(Bleached) ~ (Depth_m + Temperature_Kelvin + Temperature_Minimum + Temperature_Maximum + Windspeed), data = trainingData_lda, method="lda")
+
+```
+
+```{r echo = TRUE}
+
+lda.pred=predict(lda.fit, testingData_lda )
+
+table(lda.pred$class ,testingData_lda$Bleached)
+
+misclassification_rate=mean(lda.pred$class!= testingData_lda $Bleached)
+cat("\n")
+cat("The misclassification rate is given as :")
+cat("\n")
+
+misclassification_rate
+
+
+```
+
+
+
+```{r echo = TRUE}
+
+qda.fit<-qda(Bleached~.,data=trainingData_lda)
+
+qda.fit
+
+qda.pred=predict(qda.fit, testingData_lda)
+
+table(qda.pred$class ,testingData_lda$Bleached)
+
+misclassification_rate=mean(qda.pred$class!= testingData_lda$Bleached)
+cat("\n")
+cat("The misclassification rate is given as :")
+cat("\n")
+
+misclassification_rate
+
+library(ggplot2)
+
+# Create the confusion matrix
+conf_matrix <- matrix(c(493, 13986, 876,4068), nrow = 2, byrow = TRUE,
+                      dimnames = list(Actual = c("Not Bleached", "Bleached"),
+                                      Predicted = c("Bleached", "Not Bleached")))
+
+# Convert the matrix to a data frame
+conf_df <- as.data.frame(as.table(conf_matrix))
+names(conf_df) <- c("Actual", "Predicted", "Count")
+
+# Plot the confusion matrix heatmap using ggplot2 with switched axes
+ggplot(conf_df, aes(x = Predicted, y = Actual, fill = Count)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Count), size = 10, color = "black") +  # Add numbers inside cells
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Confusion Matrix",
+       x = "Predicted",
+       y = "Actual") +  # Switched axis labels
+  theme_minimal()
+
+
+
+```
+
+Shapiro-Wilk test. H0 : the sample data are significantly normally distributed Ha : the sample data are not significantly normally distributed
+
+```{r echo = TRUE}
+
+train_assump <- Filter(is.numeric, testingData_lda)
+# 
+# # Loop through each column in the dataframe and conduct Shapiro-Wilk test
+# for (col in names(train_assump)) {
+#   shapiro_test_result <- shapiro.test(train_assump[[col]])
+#   cat("Shapiro-Wilk Test for column", col, ":\n")
+#   print(shapiro_test_result)}
+
+
+```
+
+```{r echo = TRUE}
+
+library(energy)
+library(heplots)
+
+mvnorm.etest(train_assump, R=100)
+
+
+boxm <- heplots::boxM(train_assump, factor(testingData_lda$Bleached))
+boxm
+
+```
+
+H0 = Covariance matrices of the outcome variable are equal across all groups Ha = Covariance matrices of the outcome variable are different for at least one group
+
+H0 (null): The variables follow a multivariate normal distribution. Ha (alternative): The variables do not follow a multivariate normal distribution.
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ISLR)
+library(klaR)
+library(ggplot2)
+library(mosaic)
+library(binom)
+library(olsrr)
+library(reshape)
+library(lmtest)
+library(FSA)
+library(GGally)
+library(car)
+library(MASS)
+library(agricolae)
+library(survey)
+library(sampling)
+library(truncnorm)
+library(dplyr)
+library(mlbench)
+options(scipen = 999)
+```
+
+
+
+```{r }
+# Load necessary libraries
+library(dplyr)
+library(caret) # For data partitioning and possibly more advanced model evaluation
+
+# Assuming 'Clean_Coral_Data_semiclean.csv' is your dataset
+data <- read.csv("Clean_Coral_Data_semiclean.csv")
+
+# Filtering numeric columns from the dataset
+df_nums <- Filter(is.numeric, data)
+
+# Calculating correlation matrix for numeric columns
+cors <- cor(df_nums)
+
+# Identifying indices of highly correlated variables (excluding 1-to-1 correlation)
+corind <- which(cors > 0.9 & cors < 1, arr.ind = TRUE)
+
+# Extracting names of the variables involved in high correlation
+cornames <- unique(c(rownames(cors)[corind[, 1]], colnames(cors)[corind[, 2]]))
+
+# Printing variable names involved in high correlations
+print(cornames)
+
+# Printing the correlation matrix
+print(cors)
+
+# Names of variables to drop based on domain knowledge or preference
+dropnames <- c("Temperature_Minimum", "TSA_Minimum")
+
+# Dropping the variables of least interest with the highest correlations
+df_red1 <- df_nums[, !names(df_nums) %in% dropnames]
+
+# Preprocess the data: Convert bleaching percentage into a binary variable
+df_red1$Bleached <- ifelse(df_red1$Percent_Bleaching > 10, 1, 0)
+
+# Split the data into training and testing sets
+n <- nrow(df_red1)
+strata_sizes_1 <- round(table(df_red1$Bleached) * 0.75)
+
+strata_sizes=c(4335,20171)
+
+set.seed(2023)
+# Perform stratified sampling
+idx2=sampling:::strata(df_red1, stratanames=c("Bleached"), size = strata_sizes, method = "srswor")
+# Extract the row indices for the sample
+
+# Create training and testing datasets
+trainingData <- df_red1[idx2$ID_unit, ]
+testingData <- df_red1[-idx2$ID_unit, ]
+
+# Fit the logistic regression model using training data
+
+
+model <- glm(Bleached ~ Distance_to_Shore + Turbidity + Cyclone_Frequency + Depth_m + 
+             ClimSST + Temperature_Kelvin + Temperature_Mean + Temperature_Maximum + Windspeed +
+             SSTA + SSTA_Minimum + SSTA_Maximum + SSTA_Frequency + SSTA_FrequencyMax +
+             SSTA_FrequencyMean + SSTA_DHW + SSTA_DHWMax + SSTA_DHWMean + TSA +
+             TSA_Maximum + TSA_Mean + TSA_Frequency + TSA_FrequencyMax + TSA_FrequencyMean +
+             TSA_DHW + TSA_DHWMax + TSA_DHWMean,
+             family = binomial(link = "logit"), data = trainingData)
+
+
+```
+
+
+
+
+```{r }
+library(car)
+vifResult <- vif(model)
+print(vifResult)
+
+# Summarize the model to view coefficients and statistics
+summary(model)
+
+# Predict on testing set and evaluate the model
+predictions <- predict(model, newdata = testingData, type = "response")
+predictedClass <- ifelse(predictions > 0.5, 1, 0)
+
+# Model evaluation: Confusion Matrix
+confusionMatrix <- table(Predicted = predictedClass, Actual = testingData$Bleached)
+print(confusionMatrix)
+accuracy1 <- sum(diag(confusionMatrix)) / sum(confusionMatrix)
+print(accuracy1)
+```
+
+
+
+
+```{r}
+# Assuming 'testingData' contains the true classifications and 'model' is your trained model
+
+# Step 1: Generate Predictions
+# Generate probabilities
+probabilities <- predict(model, newdata = testingData, type = "response")
+# Convert probabilities to binary classification using 0.5 as threshold
+predictedClass <- ifelse(probabilities > 0.5, 1, 0)
+
+# Step 2: Create a Confusion Matrix
+# Actual classifications
+actualClass <- testingData$Bleached
+# Confusion matrix
+confMatrix <- table(Predicted = predictedClass, Actual = actualClass)
+
+# Print the confusion matrix
+print(confMatrix)
+
+# Step 3: Plot the Results using Base R Plot
+barplot(confMatrix, beside = TRUE, col = c("red", "blue"),
+        legend = TRUE, names.arg = c("False", "True"),
+        main = "True vs. Predicted Classification",
+        xlab = "Actual Class", ylab = "Count")
+
+# Or using ggplot2 for a better visualization
+library(ggplot2)
+df_plot <- as.data.frame(as.table(confMatrix))
+
+ggplot(df_plot, aes(x = Actual, y = Freq, fill = Predicted)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "True vs. Predicted Classification",
+       x = "Actual Classification",
+       y = "Count") +
+  scale_fill_manual(values = c("red", "blue"), labels = c("Predicted: 0", "Predicted: 1")) +
+  theme_minimal()
+
+```
+
+
+
+
+
+```{r}
+
+#take out Temperature_Mean,Temperature_Maximum,Temperature_Kelvin,SSTA_FrequencyMean,SSTA_DHWMax,SSTA_DHWMean, TSA, TSA_Maximum, TSA_Mean,TSA_FrequencyMax,TSA_FrequencyMean,TSA_DHW,TSA_DHWMax,TSA_DHWMean              
+model1 <- glm(Bleached ~ Distance_to_Shore + Turbidity + Cyclone_Frequency + Depth_m + 
+             ClimSST  + Windspeed +
+             SSTA + SSTA_Minimum + SSTA_Maximum + SSTA_Frequency + SSTA_FrequencyMax + SSTA_DHW  + TSA_Frequency,
+             family = binomial(link = "logit"), data = trainingData)
+
+vifResult1 <- vif(model1)
+print(vifResult1)
+
+# Summarize the model to view coefficients and statistics
+summary(model1)
+
+# Predict on testing set and evaluate the model
+predictions1 <- predict(model1, newdata = testingData, type = "response")
+predictedClass1 <- ifelse(predictions1 > 0.5, 1, 0)
+
+# Model evaluation: Confusion Matrix
+confusionMatrix1 <- table(Predicted = predictedClass1, Actual = testingData$Bleached)
+print(confusionMatrix1)
+accuracy <- sum(diag(confusionMatrix1)) / sum(confusionMatrix1)
+print(accuracy)
+```
+
+
+
+```{r}
+#re-code bleaching percentage into different categories. 
+df_red1$Bleached_Multi <- df_red1$Bleached_Multi <- ifelse(df_red1$Percent_Bleaching == 0, 0,
+                                  ifelse(df_red1$Percent_Bleaching <= 10, 1,
+                                         ifelse(df_red1$Percent_Bleaching <= 50, 2, 3)))
+
+
+
+# Split the data into training and testing sets 
+strata_sizes_2 <- round(table(df_red1$Bleached) * 0.75)
+
+strata_sizes_multi=c(1258,12382,3077,7790)
+
+set.seed(2023)
+
+# Perform stratified sampling
+idx3=sampling:::strata(df_red1, stratanames=c("Bleached_Multi"), size = strata_sizes_multi, method = "srswor")
+
+# Create training and testing datasets
+trainingData_multi <- df_red1[idx3$ID_unit, ]
+testingData_multi<- df_red1[-idx3$ID_unit, ]
+
+
+
+```
+
+
+```{r}
+
+library(nnet)
+
+
+# Fit a multinomial logistic regression model
+model_multi <- multinom(Bleached_Multi ~ Distance_to_Shore + Turbidity + Cyclone_Frequency + Depth_m + 
+             ClimSST + Temperature_Kelvin + Temperature_Mean + Temperature_Maximum + Windspeed +
+             SSTA + SSTA_Minimum + SSTA_Maximum + SSTA_Frequency + SSTA_FrequencyMax +
+             SSTA_FrequencyMean + SSTA_DHW + SSTA_DHWMax + SSTA_DHWMean + TSA +
+             TSA_Maximum + TSA_Mean + TSA_Frequency + TSA_FrequencyMax + TSA_FrequencyMean +
+             TSA_DHW + TSA_DHWMax + TSA_DHWMean, data = trainingData_multi)
+
+
+
+# Predict on testing set
+predictions_multi <- predict(model_multi, newdata = testingData_multi, type = "probs")
+# Convert probabilities to class labels based on the highest probability
+predictedClass_multi <- apply(predictions_multi, 1, which.max)
+
+# Model evaluation: Confusion Matrix
+
+actualClass_multi <- testingData_multi$Bleached_Multi 
+confusionMatrix_multi <- table(Predicted = predictedClass_multi, Actual = actualClass_multi)
+print(confusionMatrix_multi)
+
+# Calculate accuracy
+accuracy_multi <- sum(diag(confusionMatrix_multi)) / sum(confusionMatrix_multi)
+print(accuracy_multi)
+
+```
+```{r}
+library(ggplot2)
+
+# Ensure Bleached_Multi is a factor and correctly set up
+df_red1$Bleached_Multi <- factor(df_red1$Bleached_Multi)
+df_red1$Bleached <- factor(df_red1$Bleached)
+
+# Updated Boxplot command
+ggplot(df_red1, aes(x = Bleached_Multi, y = Percent_Bleaching, fill = Bleached_Multi)) +
+  geom_boxplot(outlier.color = "red", outlier.shape = 1) +
+  labs(title = "Boxplot of Percent Bleaching by Bleached_Multi Category",
+       x = "Bleached_Multi Category",
+       y = "Percent Bleaching") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1", direction = -1) + # Ensure distinct colors
+  theme(legend.position = "none") # Assuming color distinction is clear
+
+
+# Updated Boxplot command
+ggplot(df_red1, aes(x = Bleached, y = Percent_Bleaching, fill = Bleached)) +
+  geom_boxplot(outlier.color = "red", outlier.shape = 1) +
+  labs(title = "Boxplot of Percent Bleaching by Bleached Category",
+       x = "Bleached Category",
+       y = "Percent Bleaching") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1", direction = -1) + # Ensure distinct colors
+  theme(legend.position = "none") # Assuming color distinction is clear
+
+```
+
+
+
+
+
+
+
+
